@@ -23,15 +23,15 @@ pub(crate) struct TreeNode {
 // children[i] will point to the TreeNode which encompasses its children
 // chunk[i] will point to the data chunk.
 // both pointers may be "None", indicating either no children, or no data
-//#[derive(Clone, Debug)]
-// pub(crate) struct TreeNode2<L: LodVec>  where [(); L::NUM_CHILDREN as usize]: {
-//     // children, these can't be the root (index 0), so we can use Some and Nonzero for slightly more compact memory
-//     // children are also contiguous, so we can assume that this to this + num children - 1 are all the children of this node
-//     pub(crate) children: [Option<NonZeroU32>; L::NUM_CHILDREN as usize],
-//
-//     // where the chunk for this node is stored
-//     pub(crate) chunk: [Option<NonZeroU32>; L::NUM_CHILDREN as usize],
-// }
+#[derive(Clone, Debug)]
+pub(crate) struct TreeNode2<L: LodVec>  where [(); L::NUM_CHILDREN as usize]: {
+    // children, these can't be the root (index 0), so we can use Some and Nonzero for slightly more compact memory
+    // children are also contiguous, so we can assume that this to this + num children - 1 are all the children of this node
+    pub(crate) children: [Option<NonZeroU32>; L::NUM_CHILDREN as usize],
+
+    // where the chunk for this node is stored
+    pub(crate) chunk: [Option<NonZeroU32>; L::NUM_CHILDREN as usize],
+}
 
 // utility struct for holding actual chunks and the node that owns them
 #[derive(Clone, Debug)]
