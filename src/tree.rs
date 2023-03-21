@@ -24,13 +24,13 @@ pub(crate) struct TreeNode {
 // chunk[i] will point to the data chunk.
 // both pointers may be "None", indicating either no children, or no data
 #[derive(Clone, Debug)]
-pub(crate) struct TreeNode2<L: LodVec>  where [(); L::NUM_CHILDREN as usize]: {
+pub(crate) struct TreeNode2<L: LodVec>  where [(); L::NUM_CHILDREN]: {
     // children, these can't be the root (index 0), so we can use Some and Nonzero for slightly more compact memory
     // children are also contiguous, so we can assume that this to this + num children - 1 are all the children of this node
-    pub(crate) children: [Option<NonZeroU32>; L::NUM_CHILDREN as usize],
+    pub(crate) children: [Option<NonZeroU32>; L::NUM_CHILDREN],
 
     // where the chunk for this node is stored
-    pub(crate) chunk: [Option<NonZeroU32>; L::NUM_CHILDREN as usize],
+    pub(crate) chunk: [Option<NonZeroU32>; L::NUM_CHILDREN],
 }
 
 // utility struct for holding actual chunks and the node that owns them
@@ -78,15 +78,16 @@ struct QueueContainer<L: LodVec> {
     node: u32,   // chunk index
     position: L, // and it's position
 }
-
+use freelist;
 // Tree holding all chunks
 // partially based on: https://stackoverflow.com/questions/41946007/efficient-and-well-explained-implementation-of-a-quadtree-for-2d-collision-det
 // assumption here is that because of the fact that we need to keep inactive chunks in memory for later use, we can keep them together with the actual nodes.
 #[derive(Clone, Debug)]
-pub struct Tree<C: Sized, L: LodVec> {
+pub struct Tree<C: Sized, L: LodVec>
+     where [(); L::NUM_CHILDREN]:{
     /// All chunks in the tree
     pub(crate) chunks: Vec<ChunkContainer<C, L>>,
-
+    pub(crate) nodes2: freelist::FreeList<TreeNode2<L>>,
     /// nodes in the Tree
     pub(crate) nodes: Vec<TreeNode>,
 
@@ -125,6 +126,7 @@ impl<C, L> Tree<C, L>
 where
     C: Sized,
     L: LodVec,
+    [(); L::NUM_CHILDREN]:
 {
     /// Gets an index in self.nodes vector from a position.
     /// If position is not pointing to a node, None is returned.
@@ -147,7 +149,7 @@ where
             current.children?;
 
             // if not, go over the node children
-            if let Some((index, found_position)) = (0..L::NUM_CHILDREN)
+            if let Some((index, found_position)) = (0..L::NUM_CHILDREN as u32)
                 .map(|i| (i, current_position.get_child(i)))
                 .find(|(_, x)| x.contains_child_node(position))
             {
@@ -175,6 +177,7 @@ where
             chunks_to_deactivate: Vec::new(),
             chunks: Vec::new(),
             nodes: Vec::new(),
+            nodes2: freelist::FreeList::new(),
             free_list: VecDeque::new(),
             processing_queue: Vec::new(),
             cache_size,
@@ -196,6 +199,7 @@ where
             chunks_to_deactivate: Vec::with_capacity(capacity),
             chunks: Vec::with_capacity(capacity),
             nodes: Vec::with_capacity(capacity),
+            nodes2: freelist::FreeList::new(),
             free_list: VecDeque::with_capacity(capacity),
             processing_queue: Vec::with_capacity(capacity),
             cache_size,
@@ -492,7 +496,7 @@ where
             if current_node.children.is_none() {
                 //println!("adding children");
                 // add children to be added
-                for i in 0..L::NUM_CHILDREN {
+                for i in 0..L::NUM_CHILDREN as u32 {
                     // chunk to add
                     let chunk_to_add =
                         self.get_chunk_from_cache(current_position.get_child(i), chunk_creator);
@@ -511,7 +515,7 @@ where
             } else if let Some(index) = current_node.children {
                 //println!("has children at {index:?}");
                 // queue child nodes for processing
-                for i in 0..L::NUM_CHILDREN {
+                for i in 0..L::NUM_CHILDREN as u32 {
                     // wether we can subdivide
                     let child_pos = current_position.get_child(i);
                     //dbg!(child_pos);
@@ -617,7 +621,7 @@ where
             // if we can subdivide, and the current node does not have children, subdivide the current node
             if can_subdivide && current_node.children.is_none() {
                 // add children to be added
-                for i in 0..L::NUM_CHILDREN {
+                for i in 0..L::NUM_CHILDREN as u32{
                     // chunk to add
                     let chunk_to_add =
                         self.get_chunk_from_cache(current_position.get_child(i), chunk_creator);
@@ -636,14 +640,14 @@ where
             } else if let Some(index) = current_node.children {
                 // otherwise, if we cant subdivide and have children, remove our children
                 if !can_subdivide
-                    && !(0..L::NUM_CHILDREN)
+                    && !(0..L::NUM_CHILDREN as u32)
                         .into_iter()
                         .any(|i| self.nodes[(i + index.get()) as usize].children.is_some())
                 {
                     // first, queue ourselves for activation
                     self.chunks_to_activate.push(current_node_index);
 
-                    for i in 0..L::NUM_CHILDREN {
+                    for i in 0..L::NUM_CHILDREN as u32{
                         // no need to do this in reverse, that way the last node removed will be added to the free list, which is also the first thing used by the adding logic
                         self.chunks_to_remove.push(ToRemoveContainer {
                             chunk: index.get() + i,
@@ -652,7 +656,7 @@ where
                     }
                 } else {
                     // queue child nodes for processing if we didn't subdivide or clean up our children
-                    for i in 0..L::NUM_CHILDREN {
+                    for i in 0..L::NUM_CHILDREN as u32{
                         self.processing_queue.push(QueueContainer {
                             position: current_position.get_child(i),
                             node: index.get() + i,
@@ -762,11 +766,11 @@ where
                 // because the last node we come by in with ordered iteration is on num_children - 1, we need to set it as such].
                 // node 0 is the root, so the last child it has will be on num_children.
                 // then subtracting num_children - 1 from that gives us node 1, which is the first child of the root.
-                if new_node_index >= L::NUM_CHILDREN {
+                if new_node_index >= L::NUM_CHILDREN as u32 {
                     // because we loop in order, and our nodes are contiguous, the first node of the children got added on index i - (num children - 1)
                     // so we need to adjust for that
                     self.nodes[parent_index as usize].children =
-                        NonZeroU32::new(new_node_index - (L::NUM_CHILDREN - 1));
+                        NonZeroU32::new(new_node_index - (L::NUM_CHILDREN - 1) as u32);
                 }
             } else {
                 // otherwise we do need to do a regular swap remove
@@ -849,11 +853,11 @@ where
             // because the last node we come by in with ordered iteration is on num_children - 1, we need to set it as such].
             // node 0 is the root, so the last child it has will be on num_children.
             // then subtracting num_children - 1 from that gives us node 1, which is the first child of the root.
-            if new_node_index >= L::NUM_CHILDREN {
+            if new_node_index >= L::NUM_CHILDREN as u32 {
                 // because we loop in order, and our nodes are contiguous, the first node of the children got added on index i - (num children - 1)
                 // so we need to adjust for that
                 self.nodes[parent_index as usize].children =
-                    NonZeroU32::new(new_node_index - (L::NUM_CHILDREN - 1));
+                    NonZeroU32::new(new_node_index - (L::NUM_CHILDREN - 1) as u32);
             }
         }
 
@@ -941,6 +945,7 @@ impl<C, L> Default for Tree<C, L>
 where
     C: Sized,
     L: LodVec,
+    [(); L::NUM_CHILDREN as usize]:
 {
     /// creates a new, empty tree, with no cache
     fn default() -> Self {
